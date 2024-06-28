@@ -1,0 +1,17 @@
+{
+  "name": "lambda",
+  "version": "1.0.0",
+  "description": "zip -r lambda.zip ./index.js",
+  "main": "index.mjs",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.1648.0",
+    "fotmob": "^2.4.0",
+    "telegram": "^2.22.2"
+  }
+}
