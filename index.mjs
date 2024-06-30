@@ -3,10 +3,14 @@ import { log } from 'console';
 import Fotmob from 'fotmob';
 const fotmob = new Fotmob.default();
 AWS.config.update({ region: 'me-central-1' });
-import { TelegramClient } from "telegram";
-import { sessions } from "telegram";
+import { TelegramClient, sessions} from "telegram";
 const StringSession = sessions.StringSession;
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
+import fs from "fs";
+import { Api } from "telegram";
+import { CustomFile } from 'telegram/client/uploads.js';
+import sharp from 'sharp';
+import fetch from 'node-fetch';
 
 // Lambda function code
 export const handler = async (event) => {
@@ -49,8 +53,10 @@ export const handler = async (event) => {
 
             if (currentStatus === 'UNPROCESSED' && !!match.status.finished) {
               console.log("Match has finished. Processing...");
+              match.home.logo = await retrieveTeamLogo(match.home.id);
+              match.away.logo = await retrieveTeamLogo(match.away.id);
               await updateDb(match.id);
-              await sendMessage(match.status.scoreStr, match.home.name, match.away.name);
+              await sendMessage(match.status.scoreStr, match.home, match.away);
             } else {
               console.log("Match is still ongoing. Skipping...");
             }
@@ -84,10 +90,12 @@ const mapMatches = (matches, leagueId) => {
         id: match?.id,
         time: match?.time,
         home: {
+            id: match?.home?.id,
             name: match?.home?.name,
             score: match?.home?.score
         },
         away: {
+            id: match?.away?.id,
             name: match?.away?.name,
             score: match?.away?.score
         },
@@ -122,7 +130,7 @@ const updateDb = async (id) => {
 const sendMessage = async (scoreStr, homeTeam, awayTeam) => {
   const apiId = process.env.API_ID;
   const apiHash = process.env.API_HASH;
-  const stringSession = process.env.STRING_SESSION
+  const stringSession = new StringSession(process.env.STRING_SESSION);
   const client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
   
   try {
@@ -130,8 +138,110 @@ const sendMessage = async (scoreStr, homeTeam, awayTeam) => {
       console.log('Connecting to telegram');
       await client.connect();
     }
-    await client.sendMessage('@trystan_loke', { message: `${homeTeam} ${scoreStr} ${awayTeam} ` });
+
+    await generateResultImage('./assets/score-background.jpeg', './assets/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, '90:00', homeTeam.logo, awayTeam.logo, 'white');
+
+    const result = await client.invoke(
+    new Api.messages.SendMedia({
+      peer: -1002189268074,
+      media: new Api.InputMediaUploadedPhoto({
+        file: await client.uploadFile({
+          file: new CustomFile(
+            "output.jpg",
+            fs.statSync("./assets/output.jpg").size,
+            "./assets/output.jpg"
+          ),
+          workers: 1,
+        }),
+      }),
+      message: "",
+      // randomId: BigInt("-4156887774564"), // To prevent resending the same message
+    })
+  );
   } catch (error) {
-    throw 'Error sending message';
+    console.log('Error: ', error);
+    return error; 
   }
+}
+
+const getTeamLogo = async (teamId) => {
+  const teams = await fotmob.getTeams();
+  const team = teams.find(team => team.name === teamName);
+  return team.logo;
+}
+
+async function generateResultImage(
+  backgroundImagePath,
+  outputImagePath,
+  homeTeamName,
+  awayTeamName,
+  homeScore,
+  awayScore,
+  fullTime,
+  homeLogoUrl,
+  awayLogoUrl,
+  fontColor // Example: 'white' or '#ffffff'
+) {
+  try {
+    // Resize and overlay country flag image
+    const homeLogoBuffer = await fetch(homeLogoUrl)
+      .then(res => res.buffer())
+      .then(buffer => sharp(buffer).resize({ width: 300 }).toBuffer());
+    const awayLogoBuffer = await fetch(awayLogoUrl)
+      .then(res => res.buffer())
+      .then(buffer => sharp(buffer).resize({ width: 300 }).toBuffer());
+
+    // Use Sharp to create a new image with text overlay
+    const timeBaseX = 700;
+    const adjustmentPerCharacter = 30;
+    const lengthAdjustment = (fullTime.length - 5) * adjustmentPerCharacter / 2; // Adjusting for half, as we want to keep it centered
+    const adjustedX = timeBaseX - lengthAdjustment;
+
+    await sharp(backgroundImagePath)
+      .composite([
+        { input: homeLogoBuffer, top: 240, left: 50 },
+        { input: awayLogoBuffer, top: 240, left: 1210 },
+        { 
+          input: Buffer.from(`<svg>
+            <rect x="0" y="0" width="400" height="150" fill="rgba(0, 0, 0, 0)"/>
+            <text x="450" y="145" font-family="Arial" font-size="40" fill="${fontColor}">
+              ${homeTeamName}
+            </text>
+            <text x="870" y="145" font-family="Arial" font-size="40" fill="${fontColor}">
+              ${awayTeamName}
+            </text>
+            <text x="530" y="370" font-family="Arial" font-size="128" fill="${fontColor}">
+              ${homeScore}
+            </text>
+            <text x="960" y="370" font-family="Arial" font-size="128" fill="${fontColor}">
+              ${awayScore}
+            </text>
+            <text x="745" y="465" font-family="Arial" font-size="32" fill="${fontColor}">
+              Time
+            </text>
+            <text x="${adjustedX}" y="550" font-family="Arial" font-size="64" fill="${fontColor}">
+              ${fullTime}
+            </text>
+            <text x="550" y="528" font-family="Arial" font-size="32" fill="${fontColor}">
+              主场
+            </text>
+            <text x="948" y="528" font-family="Arial" font-size="32" fill="${fontColor}">
+              客场
+            </text>
+          </svg>`),
+          top: 0,
+          left: 0
+        }
+      ])
+      .toFile(outputImagePath);
+
+    console.log('Image created successfully!');
+  } catch (error) {
+    console.error('Error creating image:', error);
+  }
+}
+
+const retrieveTeamLogo = async (teamId) => {
+  const team = await fotmob.getTeam(teamId);
+  return team.details?.sportsTeamJSONLD?.logo;
 }

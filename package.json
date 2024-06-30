@@ -12,6 +12,8 @@
   "dependencies": {
     "aws-sdk": "^2.1648.0",
     "fotmob": "^2.4.0",
+    "node-fetch": "^3.3.2",
+    "sharp": "^0.33.4",
     "telegram": "^2.22.2"
   }
 }
