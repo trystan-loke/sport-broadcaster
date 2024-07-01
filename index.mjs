@@ -1,5 +1,4 @@
 import AWS from 'aws-sdk';
-import { log } from 'console';
 import Fotmob from 'fotmob';
 const fotmob = new Fotmob.default();
 AWS.config.update({ region: 'me-central-1' });
@@ -56,7 +55,7 @@ export const handler = async (event) => {
               match.home.logo = await retrieveTeamLogo(match.home.id);
               match.away.logo = await retrieveTeamLogo(match.away.id);
               await updateDb(match.id);
-              await sendMessage(match.id, match.home, match.away);
+              await sendMessage(match.id, match.statusId, match.home, match.away);
             } else {
               console.log("Match is still ongoing. Skipping...");
             }
@@ -99,6 +98,7 @@ const mapMatches = (matches, leagueId) => {
             name: match?.away?.name,
             score: match?.away?.score
         },
+        statusId: match?.statusId,
         status: {
             started: match?.status?.started,
             finished: match?.status?.finished,
@@ -127,7 +127,7 @@ const updateDb = async (id) => {
   await dynamoDb.update(updateParams).promise();
 }
 
-const sendMessage = async (matchId, homeTeam, awayTeam) => {
+const sendMessage = async (matchId, statusId, homeTeam, awayTeam) => {
   console.log('Env: ', process.env);
   const apiId = parseInt(process.env.API_ID, 10);
   const apiHash = process.env.API_HASH;
@@ -141,7 +141,7 @@ const sendMessage = async (matchId, homeTeam, awayTeam) => {
       await client.connect();
     }
 
-    await generateResultImage('./assets/score-background.jpeg', '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, '90:00', homeTeam.logo, awayTeam.logo, 'white');
+    await generateResultImage('./assets/score-background.jpeg', '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, statusId === 6 ? '90:00' : '120:00', homeTeam.logo, awayTeam.logo, 'white');
 
     const result = await client.invoke(
     new Api.messages.SendMedia({
