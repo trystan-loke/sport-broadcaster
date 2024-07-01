@@ -56,7 +56,7 @@ export const handler = async (event) => {
               match.home.logo = await retrieveTeamLogo(match.home.id);
               match.away.logo = await retrieveTeamLogo(match.away.id);
               await updateDb(match.id);
-              await sendMessage(match.status.scoreStr, match.home, match.away);
+              await sendMessage(match.id, match.home, match.away);
             } else {
               console.log("Match is still ongoing. Skipping...");
             }
@@ -127,11 +127,13 @@ const updateDb = async (id) => {
   await dynamoDb.update(updateParams).promise();
 }
 
-const sendMessage = async (scoreStr, homeTeam, awayTeam) => {
-  const apiId = process.env.API_ID;
+const sendMessage = async (matchId, homeTeam, awayTeam) => {
+  console.log('Env: ', process.env);
+  const apiId = parseInt(process.env.API_ID, 10);
   const apiHash = process.env.API_HASH;
   const stringSession = new StringSession(process.env.STRING_SESSION);
   const client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
+  const peerId = process.env.CHAT_ID || process.env.RECEIVER_TAG
   
   try {
     if (!client.connected) {
@@ -139,23 +141,23 @@ const sendMessage = async (scoreStr, homeTeam, awayTeam) => {
       await client.connect();
     }
 
-    await generateResultImage('./assets/score-background.jpeg', './assets/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, '90:00', homeTeam.logo, awayTeam.logo, 'white');
+    await generateResultImage('./assets/score-background.jpeg', '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, '90:00', homeTeam.logo, awayTeam.logo, 'white');
 
     const result = await client.invoke(
     new Api.messages.SendMedia({
-      peer: -1002189268074,
+      peer: peerId,
       media: new Api.InputMediaUploadedPhoto({
         file: await client.uploadFile({
           file: new CustomFile(
             "output.jpg",
-            fs.statSync("./assets/output.jpg").size,
-            "./assets/output.jpg"
+            fs.statSync("/tmp/output.jpg").size,
+            "/tmp/output.jpg"
           ),
           workers: 1,
         }),
       }),
       message: "",
-      // randomId: BigInt("-4156887774564"), // To prevent resending the same message
+      randomId: matchId, // To prevent resending the same message
     })
   );
   } catch (error) {
@@ -212,6 +214,9 @@ async function generateResultImage(
             </text>
             <text x="530" y="370" font-family="Arial" font-size="128" fill="${fontColor}">
               ${homeScore}
+            </text>
+            <text x="760" y="370" font-family="Arial" font-size="128" fill="${fontColor}">
+              -
             </text>
             <text x="960" y="370" font-family="Arial" font-size="128" fill="${fontColor}">
               ${awayScore}
