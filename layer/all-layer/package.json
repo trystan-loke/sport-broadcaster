@@ -1,0 +1,19 @@
+{
+  "name": "all-layer",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "aws-sdk": "^2.1651.0",
+    "fotmob": "^2.4.0",
+    "node-fetch": "^3.3.2",
+    "sharp": "^0.33.4",
+    "telegram": "^2.22.2"
+  }
+}
