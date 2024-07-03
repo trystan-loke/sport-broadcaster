@@ -10,11 +10,15 @@ import { Api } from "telegram";
 import { CustomFile } from 'telegram/client/uploads.js';
 import sharp from 'sharp';
 import fetch from 'node-fetch';
+import translate from "translate";
 
+let language = "english"; // Default language
 // Lambda function code
 export const handler = async (event) => {
   console.log('Event: ', event);
   const leagueId = event.leagueId; 
+  language = event.language || "english"; 
+  
 
   const matches = await fotmob.getMatchesByDate(nowStr());
   const mappedMatches = mapMatches(matches, leagueId);
@@ -206,32 +210,32 @@ async function generateResultImage(
         { 
           input: Buffer.from(`<svg>
             <rect x="0" y="0" width="400" height="150" fill="rgba(0, 0, 0, 0)"/>
-            <text x="450" y="145" font-family="Arial" font-size="40" fill="${fontColor}">
-              ${homeTeamName}
+            <text x="450" y="145" font-family="Impact" font-size="40" fill="${fontColor}">
+              ${await translateText(homeTeamName)}
             </text>
-            <text x="870" y="145" font-family="Arial" font-size="40" fill="${fontColor}">
-              ${awayTeamName}
+            <text x="870" y="145" font-family="Impact" font-size="40" fill="${fontColor}">
+              ${await translateText(awayTeamName)}
             </text>
-            <text x="530" y="370" font-family="Arial" font-size="128" fill="${fontColor}">
+            <text x="530" y="370" font-family="Impact" font-size="128" fill="${fontColor}">
               ${homeScore}
             </text>
-            <text x="760" y="370" font-family="Arial" font-size="128" fill="${fontColor}">
+            <text x="760" y="370" font-family="Impact" font-size="128" fill="${fontColor}">
               -
             </text>
-            <text x="960" y="370" font-family="Arial" font-size="128" fill="${fontColor}">
+            <text x="960" y="370" font-family="Impact" font-size="128" fill="${fontColor}">
               ${awayScore}
             </text>
-            <text x="745" y="465" font-family="Arial" font-size="32" fill="${fontColor}">
-              Time
+            <text x="745" y="465" font-family="Impact" font-size="32" fill="${fontColor}">
+              ${await translateText("Time")}
             </text>
-            <text x="${adjustedX}" y="550" font-family="Arial" font-size="64" fill="${fontColor}">
+            <text x="${adjustedX}" y="550" font-family="Impact" font-size="64" fill="${fontColor}">
               ${fullTime}
             </text>
-            <text x="550" y="528" font-family="Arial" font-size="32" fill="${fontColor}">
-              主场
+            <text x="550" y="528" font-family="Impact" font-size="32" fill="${fontColor}">
+               ${await translateText("Home Team")}
             </text>
-            <text x="948" y="528" font-family="Arial" font-size="32" fill="${fontColor}">
-              客场
+            <text x="948" y="528" font-family="Impact" font-size="32" fill="${fontColor}">
+               ${await translateText("Away Team")}
             </text>
           </svg>`),
           top: 0,
@@ -249,4 +253,12 @@ async function generateResultImage(
 const retrieveTeamLogo = async (teamId) => {
   const team = await fotmob.getTeam(teamId);
   return team.details?.sportsTeamJSONLD?.logo;
+}
+
+const translateText = async (text) => {
+  if (language === "english") {
+    // capitalize first letter
+    return text.charAt(0).toUpperCase() + text.slice(1);
+  }
+  return await translate(text, language);
 }
