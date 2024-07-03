@@ -1,3 +1,4 @@
+import TextToSVG from 'text-to-svg';
 import AWS from 'aws-sdk';
 import Fotmob from 'fotmob';
 const fotmob = new Fotmob.default();
@@ -21,11 +22,14 @@ export const handler = async (event) => {
   
 
   const matches = await fotmob.getMatchesByDate(nowStr());
+  // const matches = await fotmob.getMatchesByDate("20240702"); // testing code
   const mappedMatches = mapMatches(matches, leagueId);
 
   try {
     const iterations = 6; // Number of times to log messages
     const intervalInSeconds = 10; // Interval in seconds between each log
+    // const iterations = 1; // Number of times to log messages
+    // const intervalInSeconds = 1; // Interval in seconds between each log
     let promises = [];
 
     for (let i = 0; i < iterations; i++) {
@@ -162,6 +166,7 @@ const sendMessage = async (matchId, statusId, homeTeam, awayTeam) => {
       }),
       message: "",
       randomId: matchId, // To prevent resending the same message
+      // randomId: matchId, // Testing code
     })
   );
   } catch (error) {
@@ -197,25 +202,34 @@ async function generateResultImage(
       .then(res => res.buffer())
       .then(buffer => sharp(buffer).resize({ width: 300 }).toBuffer());
 
-    // Use Sharp to create a new image with text overlay
-    const timeBaseX = 700;
-    const adjustmentPerCharacter = 30;
-    const lengthAdjustment = (fullTime.length - 5) * adjustmentPerCharacter / 2; // Adjusting for half, as we want to keep it centered
-    const adjustedX = timeBaseX - lengthAdjustment;
+    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName), 48);
+    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName), 48);
+    const homeTextSvgBuffer = generatedTextBuffer(language === "english" ? "Home" : "主场", 30);
+    const awayTextSvgBuffer = generatedTextBuffer(language === "english" ? "Away" : "客场", 30);
+    const timeTextSvgBuffer = generatedTextBuffer(await translateText("Time"), 30);
+
+    const backgroundMetadata = await sharp(backgroundImagePath, { limitInputPixels: false }).metadata();
+    const homeTeamMetadata = await sharp(homeTeamSvgBuffer).metadata();
+    const awayTeamMetadata = await sharp(awayTeamSvgBuffer).metadata();
+    const homeTextMetadata = await sharp(homeTextSvgBuffer).metadata();
+    const awayTextMetadata = await sharp(awayTextSvgBuffer).metadata();
+    const homeTeamLeft = parseInt((backgroundMetadata.width - homeTeamMetadata.width) / 2) - 235;
+    const awayTeamLeft = parseInt((backgroundMetadata.width - awayTeamMetadata.width) / 2) + 200;
+    const homeTextLeft = parseInt((backgroundMetadata.width - homeTextMetadata.width) / 2) - 235;
+    const awayTextLeft = parseInt((backgroundMetadata.width - awayTextMetadata.width) / 2) + 198;
 
     await sharp(backgroundImagePath)
       .composite([
         { input: homeLogoBuffer, top: 240, left: 50 },
         { input: awayLogoBuffer, top: 240, left: 1210 },
+        { input: homeTeamSvgBuffer, top: 100, left: homeTeamLeft },
+        { input: awayTeamSvgBuffer, top: 100, left: awayTeamLeft },
+        { input: homeTextSvgBuffer, top: 493, left: homeTextLeft },
+        { input: awayTextSvgBuffer, top: 493, left: awayTextLeft },
+        { input: timeTextSvgBuffer, top: 430, left: 750 },
         { 
           input: Buffer.from(`<svg>
             <rect x="0" y="0" width="400" height="150" fill="rgba(0, 0, 0, 0)"/>
-            <text x="450" y="145" font-family="Impact" font-size="40" fill="${fontColor}">
-              ${await translateText(homeTeamName)}
-            </text>
-            <text x="870" y="145" font-family="Impact" font-size="40" fill="${fontColor}">
-              ${await translateText(awayTeamName)}
-            </text>
             <text x="530" y="370" font-family="Impact" font-size="128" fill="${fontColor}">
               ${homeScore}
             </text>
@@ -225,17 +239,8 @@ async function generateResultImage(
             <text x="960" y="370" font-family="Impact" font-size="128" fill="${fontColor}">
               ${awayScore}
             </text>
-            <text x="745" y="465" font-family="Impact" font-size="32" fill="${fontColor}">
-              ${await translateText("Time")}
-            </text>
-            <text x="${adjustedX}" y="550" font-family="Impact" font-size="64" fill="${fontColor}">
+            <text x="780" y="550" font-family="Impact" font-size="64" fill="${fontColor}" text-anchor="middle">
               ${fullTime}
-            </text>
-            <text x="550" y="528" font-family="Impact" font-size="32" fill="${fontColor}">
-               ${await translateText("Home Team")}
-            </text>
-            <text x="948" y="528" font-family="Impact" font-size="32" fill="${fontColor}">
-               ${await translateText("Away Team")}
             </text>
           </svg>`),
           top: 0,
@@ -261,4 +266,19 @@ const translateText = async (text) => {
     return text.charAt(0).toUpperCase() + text.slice(1);
   }
   return await translate(text, language);
+}
+
+const generatedTextBuffer = (text, size) => {
+  const textToSVG = TextToSVG.loadSync('./font.ttf');
+  const svgOptions = {
+    x: 0,
+    y: 0,
+    fontSize: size,
+    anchor: 'top',
+    attributes: { fill: 'white' },
+  };
+
+  const svg = textToSVG.getSVG(text, svgOptions);
+  const svgBuffer = Buffer.from(svg);
+  return svgBuffer;
 }
