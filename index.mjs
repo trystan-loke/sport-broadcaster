@@ -13,13 +13,11 @@ import sharp from 'sharp';
 import fetch from 'node-fetch';
 import translate from "translate";
 
-let language = "english"; // Default language
 // Lambda function code
 export const handler = async (event) => {
   console.log('Event: ', event);
-  const leagueId = event.leagueId; 
-  language = event.language || "english"; 
-  
+  const { leagueId, recipients } = event; 
+
 
   const matches = await fotmob.getMatchesByDate(nowStr());
   // const matches = await fotmob.getMatchesByDate("20240702"); // testing code
@@ -60,10 +58,9 @@ export const handler = async (event) => {
 
             if (currentStatus === 'UNPROCESSED' && !!match.status.finished) {
               console.log("Match has finished. Processing...");
-              match.home.logo = await retrieveTeamLogo(match.home.id);
-              match.away.logo = await retrieveTeamLogo(match.away.id);
+              
               await updateDb(match.id);
-              await sendMessage(match.id, match.statusId, match.home, match.away);
+              await sendMessage(match.id, match.statusId, match.home, match.away, recipients);
             } else {
               console.log("Match is still ongoing. Skipping...");
             }
@@ -135,40 +132,44 @@ const updateDb = async (id) => {
   await dynamoDb.update(updateParams).promise();
 }
 
-const sendMessage = async (matchId, statusId, homeTeam, awayTeam) => {
+const sendMessage = async (matchId, statusId, homeTeam, awayTeam, recipients) => {
   console.log('Env: ', process.env);
   const apiId = parseInt(process.env.API_ID, 10);
   const apiHash = process.env.API_HASH;
   const stringSession = new StringSession(process.env.STRING_SESSION);
   const client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
-  const peerId = process.env.CHAT_ID || process.env.RECEIVER_TAG
   
   try {
     if (!client.connected) {
       console.log('Connecting to telegram');
       await client.connect();
     }
+    homeTeam.logo = await retrieveTeamLogo(homeTeam.id);
+    awayTeam.logo = await retrieveTeamLogo(awayTeam.id);
 
-    await generateResultImage('./assets/score-background.jpeg', '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, statusId === 6 ? '90:00' : '120:00', homeTeam.logo, awayTeam.logo, 'white');
+    for (const recipient of recipients) {
+      await generateResultImage('./assets/score-background.jpeg', '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, statusId === 6 ? '90:00' : '120:00', homeTeam.logo, awayTeam.logo, 'white', recipient.language);
 
-    const result = await client.invoke(
-    new Api.messages.SendMedia({
-      peer: peerId,
-      media: new Api.InputMediaUploadedPhoto({
-        file: await client.uploadFile({
-          file: new CustomFile(
-            "output.jpg",
-            fs.statSync("/tmp/output.jpg").size,
-            "/tmp/output.jpg"
-          ),
-          workers: 1,
-        }),
-      }),
-      message: "",
-      randomId: matchId, // To prevent resending the same message
-      // randomId: matchId, // Testing code
-    })
-  );
+      const result = await client.invoke(
+        new Api.messages.SendMedia({
+          peer: recipient.chatId,
+          media: new Api.InputMediaUploadedPhoto({
+            file: await client.uploadFile({
+              file: new CustomFile(
+                "output.jpg",
+                fs.statSync("/tmp/output.jpg").size,
+                "/tmp/output.jpg"
+              ),
+              workers: 1,
+            }),
+          }),
+          message: "",
+          randomId: matchId, // To prevent resending the same message
+          // randomId: matchId, // Testing code
+        })
+      );
+    }
+    
   } catch (error) {
     console.log('Error: ', error);
     return error; 
@@ -191,7 +192,8 @@ async function generateResultImage(
   fullTime,
   homeLogoUrl,
   awayLogoUrl,
-  fontColor // Example: 'white' or '#ffffff'
+  fontColor,
+  language
 ) {
   try {
     // Resize and overlay country flag image
@@ -202,11 +204,11 @@ async function generateResultImage(
       .then(res => res.buffer())
       .then(buffer => sharp(buffer).resize({ width: 300 }).toBuffer());
 
-    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName), 48);
-    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName), 48);
+    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 48);
+    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 48);
     const homeTextSvgBuffer = generatedTextBuffer(language === "english" ? "Home" : "主场", 30);
     const awayTextSvgBuffer = generatedTextBuffer(language === "english" ? "Away" : "客场", 30);
-    const timeTextSvgBuffer = generatedTextBuffer(await translateText("Time"), 30);
+    const timeTextSvgBuffer = generatedTextBuffer(await translateText("Time", language), 30);
 
     const backgroundMetadata = await sharp(backgroundImagePath, { limitInputPixels: false }).metadata();
     const homeTeamMetadata = await sharp(homeTeamSvgBuffer).metadata();
@@ -260,7 +262,7 @@ const retrieveTeamLogo = async (teamId) => {
   return team.details?.sportsTeamJSONLD?.logo;
 }
 
-const translateText = async (text) => {
+const translateText = async (text, language) => {
   if (language === "english") {
     // capitalize first letter
     return text.charAt(0).toUpperCase() + text.slice(1);
