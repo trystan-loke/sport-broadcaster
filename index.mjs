@@ -13,21 +13,22 @@ import sharp from 'sharp';
 import fetch from 'node-fetch';
 import translate from "translate";
 
+let isTest = false;
+let skipRandomCheck = false;
 // Lambda function code
 export const handler = async (event) => {
   console.log('Event: ', event);
-  const { leagueId, recipients } = event; 
+  const { leagueId, recipients, matchDate } = event; 
+  isTest = event.isTest || false;
+  skipRandomCheck = event.skipRandomCheck || false;
 
 
-  const matches = await fotmob.getMatchesByDate(nowStr());
-  // const matches = await fotmob.getMatchesByDate("20240702"); // testing code
+  const matches = await fotmob.getMatchesByDate(matchDate || nowStr());
   const mappedMatches = mapMatches(matches, leagueId);
 
   try {
-    const iterations = 6; // Number of times to log messages
-    const intervalInSeconds = 10; // Interval in seconds between each log
-    // const iterations = 1; // Number of times to log messages
-    // const intervalInSeconds = 1; // Interval in seconds between each log
+    const iterations = isTest ? 1 : 6; // Number of times to log messages
+    const intervalInSeconds = isTest ? 1 : 10; // Interval in seconds between each log
     let promises = [];
 
     for (let i = 0; i < iterations; i++) {
@@ -129,11 +130,11 @@ const updateDb = async (id) => {
       ':status': 'PROCESSED'
     }
   };
-  await dynamoDb.update(updateParams).promise();
+  if(!isTest)
+    await dynamoDb.update(updateParams).promise();
 }
 
 const sendMessage = async (matchId, statusId, homeTeam, awayTeam, recipients) => {
-  console.log('Env: ', process.env);
   const apiId = parseInt(process.env.API_ID, 10);
   const apiHash = process.env.API_HASH;
   const stringSession = new StringSession(process.env.STRING_SESSION);
@@ -148,7 +149,7 @@ const sendMessage = async (matchId, statusId, homeTeam, awayTeam, recipients) =>
     awayTeam.logo = await retrieveTeamLogo(awayTeam.id);
 
     for (const recipient of recipients) {
-      await generateResultImage('./assets/score-background.jpeg', '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, statusId === 6 ? '90:00' : '120:00', homeTeam.logo, awayTeam.logo, 'white', recipient.language);
+      await generateResultImage('./assets/score-background.jpeg', isTest ? './output.jpg' : '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, statusId === 6 ? '90:00' : '120:00', homeTeam.logo, awayTeam.logo, recipient.language);
 
       const result = await client.invoke(
         new Api.messages.SendMedia({
@@ -157,14 +158,14 @@ const sendMessage = async (matchId, statusId, homeTeam, awayTeam, recipients) =>
             file: await client.uploadFile({
               file: new CustomFile(
                 "output.jpg",
-                fs.statSync("/tmp/output.jpg").size,
-                "/tmp/output.jpg"
+                fs.statSync(isTest ? "./output.jpg" : "/tmp/output.jpg").size,
+                isTest ? "./output.jpg" : "/tmp/output.jpg"
               ),
               workers: 1,
             }),
           }),
           message: "",
-          randomId: matchId, // To prevent resending the same message
+          randomId: isTest || skipRandomCheck ? Math.floor(Math.random() * 1000000): matchId, // To prevent resending the same message
           // randomId: matchId, // Testing code
         })
       );
@@ -192,7 +193,6 @@ async function generateResultImage(
   fullTime,
   homeLogoUrl,
   awayLogoUrl,
-  fontColor,
   language
 ) {
   try {
@@ -204,11 +204,17 @@ async function generateResultImage(
       .then(res => res.buffer())
       .then(buffer => sharp(buffer).resize({ width: 300 }).toBuffer());
 
-    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 48);
-    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 48);
-    const homeTextSvgBuffer = generatedTextBuffer(language === "english" ? "Home" : "主场", 30);
-    const awayTextSvgBuffer = generatedTextBuffer(language === "english" ? "Away" : "客场", 30);
-    const timeTextSvgBuffer = generatedTextBuffer(await translateText("Time", language), 30);
+
+    const textFontPath = './fonts/font-text.ttf'
+    const numberFontPath = './fonts/DIGITALDREAMNARROW.ttf'
+    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 48, textFontPath, 'white');
+    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 48, textFontPath, 'white');
+    const homeTextSvgBuffer = generatedTextBuffer(language === "english" ? "Home" : "主场", 30, textFontPath, '#7AE04E');
+    const awayTextSvgBuffer = generatedTextBuffer(language === "english" ? "Away" : "客场", 30, textFontPath, '#7AE04E');
+    const timeTextSvgBuffer = generatedTextBuffer(await translateText("Time", language), 30, textFontPath, '#7AE04E');
+    const homeScoreSvgBuffer = generatedTextBuffer(homeScore.toString().padStart(2, '0'), 150, numberFontPath, 'white');
+    const awayScoreSvgBuffer = generatedTextBuffer(awayScore.toString().padStart(2, '0'), 150, numberFontPath, 'white');
+    const fullTimeSvgBuffer = generatedTextBuffer(fullTime, 50, numberFontPath, '#C62825');
 
     const backgroundMetadata = await sharp(backgroundImagePath, { limitInputPixels: false }).metadata();
     const homeTeamMetadata = await sharp(homeTeamSvgBuffer).metadata();
@@ -220,6 +226,9 @@ async function generateResultImage(
     const homeTextLeft = parseInt((backgroundMetadata.width - homeTextMetadata.width) / 2) - 235;
     const awayTextLeft = parseInt((backgroundMetadata.width - awayTextMetadata.width) / 2) + 198;
 
+    const fullTimeMetadata = await sharp(fullTimeSvgBuffer).metadata();
+    const fullTimeLeft = parseInt((backgroundMetadata.width - fullTimeMetadata.width) / 2) - 19;
+
     await sharp(backgroundImagePath)
       .composite([
         { input: homeLogoBuffer, top: 240, left: 50 },
@@ -228,26 +237,10 @@ async function generateResultImage(
         { input: awayTeamSvgBuffer, top: 100, left: awayTeamLeft },
         { input: homeTextSvgBuffer, top: 493, left: homeTextLeft },
         { input: awayTextSvgBuffer, top: 493, left: awayTextLeft },
-        { input: timeTextSvgBuffer, top: 430, left: 750 },
-        { 
-          input: Buffer.from(`<svg>
-            <rect x="0" y="0" width="400" height="150" fill="rgba(0, 0, 0, 0)"/>
-            <text x="530" y="370" font-family="Impact" font-size="128" fill="${fontColor}">
-              ${homeScore}
-            </text>
-            <text x="760" y="370" font-family="Impact" font-size="128" fill="${fontColor}">
-              -
-            </text>
-            <text x="960" y="370" font-family="Impact" font-size="128" fill="${fontColor}">
-              ${awayScore}
-            </text>
-            <text x="780" y="550" font-family="Impact" font-size="64" fill="${fontColor}" text-anchor="middle">
-              ${fullTime}
-            </text>
-          </svg>`),
-          top: 0,
-          left: 0
-        }
+        { input: timeTextSvgBuffer, top: 430, left: language === 'english' ? 745 : 750 },
+        { input: homeScoreSvgBuffer, top: 250, left: 480 },
+        { input: awayScoreSvgBuffer, top: 250, left: 902 },
+        { input: fullTimeSvgBuffer, top: 491, left: fullTimeLeft },
       ])
       .toFile(outputImagePath);
 
@@ -270,17 +263,32 @@ const translateText = async (text, language) => {
   return await translate(text, language);
 }
 
-const generatedTextBuffer = (text, size) => {
-  const textToSVG = TextToSVG.loadSync('./font.ttf');
+const generatedTextBuffer = (text, size, fontPath, fillColor) => {
+  const textToSVG = TextToSVG.loadSync(fontPath);
   const svgOptions = {
     x: 0,
     y: 0,
     fontSize: size,
     anchor: 'top',
-    attributes: { fill: 'white' },
+    attributes: { fill: fillColor },
   };
 
   const svg = textToSVG.getSVG(text, svgOptions);
   const svgBuffer = Buffer.from(svg);
   return svgBuffer;
 }
+
+// Simulate Lambda environment
+// const event = { 
+//   leagueId: 50, 
+//   recipients: [
+//     { chatId: "-4281667405", language: "chinese" },
+//     { chatId: "-4281667405", language: "english" }
+//   ],
+//   matchDate: "20240702",
+//   isTest: true,
+//   skipRandomCheck: true
+// };
+// handler(event)
+//     .then((result) => console.log(result))
+//     .catch((error) => console.error(error));
