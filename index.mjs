@@ -165,7 +165,7 @@ const sendMessage = async (matchId, statusId, homeTeam, awayTeam, recipients) =>
             }),
           }),
           message: "",
-          randomId: isTest || skipRandomCheck ? Math.floor(Math.random() * 1000000): matchId, // To prevent resending the same message
+          randomId: isTest || skipRandomCheck ? Math.floor(Math.random() * 1000000) : Number(matchId.toString() + (recipient.language === 'english' ? '0' : '1')), // To prevent resending the same message
           // randomId: matchId, // Testing code
         })
       );
