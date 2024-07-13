@@ -50,20 +50,32 @@ export const handler = async (event) => {
               }
             };
             const dbResult = await dynamoDb.get(params).promise();
-            const currentStatus = dbResult.Item ? dbResult.Item.status : 'UNPROCESSED';
+            const currentStatus = dbResult.Item && dbResult.Item.status ? dbResult.Item.status : 'STARTED';
+            const sentCount = dbResult.Item && dbResult.Item.send_count ? dbResult.Item.send_count : 0;
 
             if (currentStatus === 'PROCESSED') {
               console.log("Match has been processed before. Skipping...");
               continue;
             }
 
-            if (currentStatus === 'UNPROCESSED' && !!match.status.finished) {
+            // Process score change, send message when score change
+            if(!match.status.finished && (((dbResult.Item?.home_score || 0) != match.home.score) || ((dbResult.Item?.away_score || 0) != match.away.score))){
+              console.log("Team score has changed. Processing...");
+              await updateMatchStatus(match.id, currentStatus, match.home.score, match.away.score, sentCount + 1);
+              await sendMessage(match.id, match.status.liveTime.long, leagueId, match.home, match.away, recipients, sentCount);
+            }
+
+            // Process Half time
+            if (currentStatus === 'STARTED' && match.statusId === 10 && match.status.liveTime.short === 'HT') {
+              console.log("Match is half time. Processing...");
+              await updateMatchStatus(match.id, 'HALF_TIME', match.home.score, match.away.score, sentCount + 1);
+              await sendMessage(match.id, '45:00', leagueId, match.home, match.away, recipients, sentCount);
+            }
+
+            if (currentStatus !== 'PROCESSED' && !!match.status.finished) {
               console.log("Match has finished. Processing...");
-              
-              await updateDb(match.id);
-              await sendMessage(match.id, match.statusId, match.home, match.away, recipients);
-            } else {
-              console.log("Match is still ongoing. Skipping...");
+              await updateMatchStatus(match.id, 'PROCESSED', match.home.score, match.away.score, sentCount + 1);
+              await sendMessage(match.id, match.statusId === 6 ? '90:00' : '120:00', leagueId, match.home, match.away, recipients, sentCount);
             }
           }
           resolve(); // Resolve the promise after the timeout
@@ -109,37 +121,49 @@ const mapMatches = (matches, leagueId) => {
             started: match?.status?.started,
             finished: match?.status?.finished,
             cancelled: match?.status?.cancelled,
-            scoreStr: match?.status?.scoreStr
+            scoreStr: match?.status?.scoreStr,
+            liveTime: {
+              short: match?.status?.liveTime?.short,
+              long: match?.status?.liveTime?.long
+            }
         },
         eliminatedTeamId: match?.eliminatedTeamId
     }));
   return filteredMatches;
 }
 
-const updateDb = async (id) => {
+const updateMatchStatus = async (id, status, homeScore, awayScore, sentCount) => {
   const updateParams = {
     TableName: 'MATCH_STATUS',
     Key: {
       match_id: id
     },
-    UpdateExpression: 'set #status = :status',
+    UpdateExpression: 'set #status = :status, #homeScore = :homeScore, #awayScore = :awayScore, #sentCount = :sentCount, #updatedTime = :updatedTime',
     ExpressionAttributeNames: {
-      '#status': 'status'
+      '#status': 'status',
+      '#homeScore': 'home_score',
+      '#awayScore': 'away_score',
+      '#sentCount': 'sent_count',
+      '#updatedTime': 'updated_time'
     },
     ExpressionAttributeValues: {
-      ':status': 'PROCESSED'
+      ':status': status,
+      ':homeScore': homeScore,
+      ':awayScore': awayScore,
+      ':sentCount': sentCount,
+      ':updatedTime': new Date().toISOString()
     }
   };
   if(!isTest)
     await dynamoDb.update(updateParams).promise();
 }
 
-const sendMessage = async (matchId, statusId, homeTeam, awayTeam, recipients) => {
+const sendMessage = async (matchId, matchTime, leagueId, homeTeam, awayTeam, recipients, sentCount) => {
   const apiId = parseInt(process.env.API_ID, 10);
   const apiHash = process.env.API_HASH;
   const stringSession = new StringSession(process.env.STRING_SESSION);
   const client = new TelegramClient(stringSession, apiId, apiHash, { connectionRetries: 5 });
-  
+
   try {
     if (!client.connected) {
       console.log('Connecting to telegram');
@@ -149,26 +173,33 @@ const sendMessage = async (matchId, statusId, homeTeam, awayTeam, recipients) =>
     awayTeam.logo = await retrieveTeamLogo(awayTeam.id);
 
     for (const recipient of recipients) {
-      await generateResultImage('./assets/score-background.jpeg', isTest ? './output.jpg' : '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, statusId === 6 ? '90:00' : '120:00', homeTeam.logo, awayTeam.logo, recipient.language);
+      // TODO fix hard code league name
+      let leagueName = ' ' // Empty string will have erroe so use space
+      if(leagueId === 50) {
+        leagueName = recipient.language === 'english' ? 'EUROS' : '欧洲杯';
+      } else if (leagueId === 44) {
+        leagueName = recipient.language === 'english' ? 'COPA' : '美洲杯';
+      }
+      await generateResultImage('./assets/score-background.jpeg', isTest ? './output.jpg' : '/tmp/output.jpg', leagueName, homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, matchTime, homeTeam.logo, awayTeam.logo, recipient.language);
 
-      const result = await client.invoke(
-        new Api.messages.SendMedia({
-          peer: recipient.chatId,
-          media: new Api.InputMediaUploadedPhoto({
-            file: await client.uploadFile({
-              file: new CustomFile(
-                "output.jpg",
-                fs.statSync(isTest ? "./output.jpg" : "/tmp/output.jpg").size,
-                isTest ? "./output.jpg" : "/tmp/output.jpg"
-              ),
-              workers: 1,
+      if (sentCount < 10) { // Prevent spam
+        const result = await client.invoke(
+          new Api.messages.SendMedia({
+            peer: recipient.chatId,
+            media: new Api.InputMediaUploadedPhoto({
+              file: await client.uploadFile({
+                file: new CustomFile(
+                  "output.jpg",
+                  fs.statSync(isTest ? "./output.jpg" : "/tmp/output.jpg").size,
+                  isTest ? "./output.jpg" : "/tmp/output.jpg"
+                ),
+                workers: 1,
+              }),
             }),
-          }),
-          message: "",
-          randomId: isTest || skipRandomCheck ? Math.floor(Math.random() * 1000000) : Number(matchId.toString() + (recipient.language === 'english' ? '0' : '1')), // To prevent resending the same message
-          // randomId: matchId, // Testing code
-        })
-      );
+            message: "",
+          })
+        );
+      }
     }
     
   } catch (error) {
@@ -186,6 +217,7 @@ const getTeamLogo = async (teamId) => {
 async function generateResultImage(
   backgroundImagePath,
   outputImagePath,
+  leagueName,
   homeTeamName,
   awayTeamName,
   homeScore,
@@ -207,20 +239,23 @@ async function generateResultImage(
 
     const textFontPath = './fonts/font-text.ttf'
     const numberFontPath = './fonts/DIGITALDREAMNARROW.ttf'
-    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 48, textFontPath, 'white');
-    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 48, textFontPath, 'white');
+    const leagueNameSvgBuffer = generatedTextBuffer(leagueName, 30, textFontPath, '#7AE04E');
+    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 35, textFontPath, 'white');
+    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 35, textFontPath, 'white');
     const homeTextSvgBuffer = generatedTextBuffer(language === "english" ? "Home" : "主场", 30, textFontPath, '#7AE04E');
     const awayTextSvgBuffer = generatedTextBuffer(language === "english" ? "Away" : "客场", 30, textFontPath, '#7AE04E');
     const timeTextSvgBuffer = generatedTextBuffer(await translateText("Time", language), 30, textFontPath, '#7AE04E');
     const homeScoreSvgBuffer = generatedTextBuffer(homeScore.toString().padStart(2, '0'), 150, numberFontPath, 'white');
     const awayScoreSvgBuffer = generatedTextBuffer(awayScore.toString().padStart(2, '0'), 150, numberFontPath, 'white');
-    const fullTimeSvgBuffer = generatedTextBuffer(fullTime, 50, numberFontPath, '#C62825');
+    const fullTimeSvgBuffer = generatedTextBuffer(fullTime, 50, numberFontPath, fullTime === '90:00' || fullTime === '120:00' ? '#C62825' : '#7AE04E');
 
     const backgroundMetadata = await sharp(backgroundImagePath, { limitInputPixels: false }).metadata();
+    const leagueNameMetadata = await sharp(leagueNameSvgBuffer).metadata();
     const homeTeamMetadata = await sharp(homeTeamSvgBuffer).metadata();
     const awayTeamMetadata = await sharp(awayTeamSvgBuffer).metadata();
     const homeTextMetadata = await sharp(homeTextSvgBuffer).metadata();
     const awayTextMetadata = await sharp(awayTextSvgBuffer).metadata();
+    const leagueNameLeft = parseInt((backgroundMetadata.width - leagueNameMetadata.width) / 2) - 20;
     const homeTeamLeft = parseInt((backgroundMetadata.width - homeTeamMetadata.width) / 2) - 235;
     const awayTeamLeft = parseInt((backgroundMetadata.width - awayTeamMetadata.width) / 2) + 200;
     const homeTextLeft = parseInt((backgroundMetadata.width - homeTextMetadata.width) / 2) - 235;
@@ -233,8 +268,9 @@ async function generateResultImage(
       .composite([
         { input: homeLogoBuffer, top: 240, left: 50 },
         { input: awayLogoBuffer, top: 240, left: 1210 },
-        { input: homeTeamSvgBuffer, top: 100, left: homeTeamLeft },
-        { input: awayTeamSvgBuffer, top: 100, left: awayTeamLeft },
+        { input: leagueNameSvgBuffer, top: 70, left: leagueNameLeft },
+        { input: homeTeamSvgBuffer, top: 110, left: homeTeamLeft },
+        { input: awayTeamSvgBuffer, top: 110, left: awayTeamLeft },
         { input: homeTextSvgBuffer, top: 493, left: homeTextLeft },
         { input: awayTextSvgBuffer, top: 493, left: awayTextLeft },
         { input: timeTextSvgBuffer, top: 430, left: language === 'english' ? 745 : 750 },
@@ -278,14 +314,13 @@ const generatedTextBuffer = (text, size, fontPath, fillColor) => {
   return svgBuffer;
 }
 
-// Simulate Lambda environment
+// // Simulate Lambda environment
 // const event = { 
-//   leagueId: 50, 
+//   leagueId: 251, 
 //   recipients: [
-//     { chatId: "-4281667405", language: "chinese" },
 //     { chatId: "-4281667405", language: "english" }
 //   ],
-//   matchDate: "20240702",
+//   matchDate: "20240713",
 //   isTest: true,
 //   skipRandomCheck: true
 // };
