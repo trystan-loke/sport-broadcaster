@@ -174,7 +174,7 @@ const sendMessage = async (matchId, matchTime, leagueId, homeTeam, awayTeam, rec
 
     for (const recipient of recipients) {
       // TODO fix hard code league name
-      let leagueName = ''
+      let leagueName = ' ' // Empty string will have erroe so use space
       if(leagueId === 50) {
         leagueName = recipient.language === 'english' ? 'EUROS' : '欧洲杯';
       } else if (leagueId === 44) {
