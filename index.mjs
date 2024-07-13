@@ -62,20 +62,20 @@ export const handler = async (event) => {
             if(!match.status.finished && (((dbResult.Item?.home_score || 0) != match.home.score) || ((dbResult.Item?.away_score || 0) != match.away.score))){
               console.log("Team score has changed. Processing...");
               await updateMatchStatus(match.id, currentStatus, match.home.score, match.away.score, sentCount + 1);
-              await sendMessage(match.id, match.status.liveTime.long, match.home, match.away, recipients, sentCount);
+              await sendMessage(match.id, match.status.liveTime.long, leagueId, match.home, match.away, recipients, sentCount);
             }
 
             // Process Half time
             if (currentStatus === 'STARTED' && match.statusId === 10 && match.status.liveTime.short === 'HT') {
               console.log("Match is half time. Processing...");
               await updateMatchStatus(match.id, 'HALF_TIME', match.home.score, match.away.score, sentCount + 1);
-              await sendMessage(match.id, '45:00', match.home, match.away, recipients, sentCount);
+              await sendMessage(match.id, '45:00', leagueId, match.home, match.away, recipients, sentCount);
             }
 
             if (currentStatus !== 'PROCESSED' && !!match.status.finished) {
               console.log("Match has finished. Processing...");
               await updateMatchStatus(match.id, 'PROCESSED', match.home.score, match.away.score, sentCount + 1);
-              await sendMessage(match.id, match.statusId === 6 ? '90:00' : '120:00', match.home, match.away, recipients, sentCount);
+              await sendMessage(match.id, match.statusId === 6 ? '90:00' : '120:00', leagueId, match.home, match.away, recipients, sentCount);
             }
           }
           resolve(); // Resolve the promise after the timeout
@@ -158,7 +158,7 @@ const updateMatchStatus = async (id, status, homeScore, awayScore, sentCount) =>
     await dynamoDb.update(updateParams).promise();
 }
 
-const sendMessage = async (matchId, matchTime, homeTeam, awayTeam, recipients, sentCount) => {
+const sendMessage = async (matchId, matchTime, leagueId, homeTeam, awayTeam, recipients, sentCount) => {
   const apiId = parseInt(process.env.API_ID, 10);
   const apiHash = process.env.API_HASH;
   const stringSession = new StringSession(process.env.STRING_SESSION);
@@ -173,7 +173,14 @@ const sendMessage = async (matchId, matchTime, homeTeam, awayTeam, recipients, s
     awayTeam.logo = await retrieveTeamLogo(awayTeam.id);
 
     for (const recipient of recipients) {
-      await generateResultImage('./assets/score-background.jpeg', isTest ? './output.jpg' : '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, matchTime, homeTeam.logo, awayTeam.logo, recipient.language);
+      // TODO fix hard code league name
+      let leagueName = ''
+      if(leagueId === 50) {
+        leagueName = recipient.language === 'english' ? 'EUROS' : '欧洲杯';
+      } else if (leagueId === 44) {
+        leagueName = recipient.language === 'english' ? 'COPA' : '美洲杯';
+      }
+      await generateResultImage('./assets/score-background.jpeg', isTest ? './output.jpg' : '/tmp/output.jpg', leagueName, homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, matchTime, homeTeam.logo, awayTeam.logo, recipient.language);
 
       if (sentCount < 10) { // Prevent spam
         const result = await client.invoke(
@@ -210,6 +217,7 @@ const getTeamLogo = async (teamId) => {
 async function generateResultImage(
   backgroundImagePath,
   outputImagePath,
+  leagueName,
   homeTeamName,
   awayTeamName,
   homeScore,
@@ -231,6 +239,7 @@ async function generateResultImage(
 
     const textFontPath = './fonts/font-text.ttf'
     const numberFontPath = './fonts/DIGITALDREAMNARROW.ttf'
+    const leagueNameSvgBuffer = generatedTextBuffer(leagueName, 30, textFontPath, '#7AE04E');
     const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 48, textFontPath, 'white');
     const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 48, textFontPath, 'white');
     const homeTextSvgBuffer = generatedTextBuffer(language === "english" ? "Home" : "主场", 30, textFontPath, '#7AE04E');
@@ -241,10 +250,12 @@ async function generateResultImage(
     const fullTimeSvgBuffer = generatedTextBuffer(fullTime, 50, numberFontPath, fullTime === '90:00' || fullTime === '120:00' ? '#C62825' : '#7AE04E');
 
     const backgroundMetadata = await sharp(backgroundImagePath, { limitInputPixels: false }).metadata();
+    const leagueNameMetadata = await sharp(leagueNameSvgBuffer).metadata();
     const homeTeamMetadata = await sharp(homeTeamSvgBuffer).metadata();
     const awayTeamMetadata = await sharp(awayTeamSvgBuffer).metadata();
     const homeTextMetadata = await sharp(homeTextSvgBuffer).metadata();
     const awayTextMetadata = await sharp(awayTextSvgBuffer).metadata();
+    const leagueNameLeft = parseInt((backgroundMetadata.width - leagueNameMetadata.width) / 2) - 20;
     const homeTeamLeft = parseInt((backgroundMetadata.width - homeTeamMetadata.width) / 2) - 235;
     const awayTeamLeft = parseInt((backgroundMetadata.width - awayTeamMetadata.width) / 2) + 200;
     const homeTextLeft = parseInt((backgroundMetadata.width - homeTextMetadata.width) / 2) - 235;
@@ -257,8 +268,9 @@ async function generateResultImage(
       .composite([
         { input: homeLogoBuffer, top: 240, left: 50 },
         { input: awayLogoBuffer, top: 240, left: 1210 },
-        { input: homeTeamSvgBuffer, top: 100, left: homeTeamLeft },
-        { input: awayTeamSvgBuffer, top: 100, left: awayTeamLeft },
+        { input: leagueNameSvgBuffer, top: 70, left: leagueNameLeft },
+        { input: homeTeamSvgBuffer, top: 110, left: homeTeamLeft },
+        { input: awayTeamSvgBuffer, top: 110, left: awayTeamLeft },
         { input: homeTextSvgBuffer, top: 493, left: homeTextLeft },
         { input: awayTextSvgBuffer, top: 493, left: awayTextLeft },
         { input: timeTextSvgBuffer, top: 430, left: language === 'english' ? 745 : 750 },
