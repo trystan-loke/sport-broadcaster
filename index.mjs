@@ -240,8 +240,8 @@ async function generateResultImage(
     const textFontPath = './fonts/font-text.ttf'
     const numberFontPath = './fonts/DIGITALDREAMNARROW.ttf'
     const leagueNameSvgBuffer = generatedTextBuffer(leagueName, 30, textFontPath, '#7AE04E');
-    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 48, textFontPath, 'white');
-    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 48, textFontPath, 'white');
+    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 35, textFontPath, 'white');
+    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 35, textFontPath, 'white');
     const homeTextSvgBuffer = generatedTextBuffer(language === "english" ? "Home" : "主场", 30, textFontPath, '#7AE04E');
     const awayTextSvgBuffer = generatedTextBuffer(language === "english" ? "Away" : "客场", 30, textFontPath, '#7AE04E');
     const timeTextSvgBuffer = generatedTextBuffer(await translateText("Time", language), 30, textFontPath, '#7AE04E');
