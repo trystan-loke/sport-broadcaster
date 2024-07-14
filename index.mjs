@@ -75,7 +75,7 @@ export const handler = async (event) => {
             if (currentStatus !== 'PROCESSED' && !!match.status.finished) {
               console.log("Match has finished. Processing...");
               await updateMatchStatus(match.id, 'PROCESSED', match.home.score, match.away.score, sentCount + 1);
-              await sendMessage(match.id, match.statusId === 6 ? '90:00' : '120:00', leagueId, match.home, match.away, recipients, sentCount);
+              await sendMessage(match.id, match.status.halfs.firstExtraHalfStarted ? '120:00' : '90:00', leagueId, match.home, match.away, recipients, sentCount);
             }
           }
           resolve(); // Resolve the promise after the timeout
@@ -122,6 +122,10 @@ const mapMatches = (matches, leagueId) => {
             finished: match?.status?.finished,
             cancelled: match?.status?.cancelled,
             scoreStr: match?.status?.scoreStr,
+            halfs: {
+              firstExtraHalfStarted: match?.status?.halfs?.firstExtraHalfStarted,
+              secondExtraHalfStarted: match?.status?.halfs?.secondExtraHalfStarted
+            },
             liveTime: {
               short: match?.status?.liveTime?.short,
               long: match?.status?.liveTime?.long
