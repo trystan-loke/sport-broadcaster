@@ -21,8 +21,13 @@ export const handler = async (event) => {
   isTest = event.isTest || false;
   skipRandomCheck = event.skipRandomCheck || false;
 
+  const now = new Date();
+  now.setUTCHours(now.getUTCHours() + 2);
+  const utcStr = now.getUTCFullYear().toString() +
+  String(now.getUTCMonth() + 1).padStart(2, '0') + // Months are zero-based
+  String(now.getUTCDate()).padStart(2, '0'); // Use getUTCDate() instead of getDay()
 
-  const matches = await fotmob.getMatchesByDate(matchDate || nowStr());
+  const matches = await fotmob.getMatchesByDate(matchDate || utcStr);
   const mappedMatches = mapMatches(matches, leagueId);
 
   try {
