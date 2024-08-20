@@ -3,11 +3,10 @@ import AWS from 'aws-sdk';
 import Fotmob from 'fotmob';
 const fotmob = new Fotmob.default();
 AWS.config.update({ region: 'me-central-1' });
-import { TelegramClient, sessions} from "telegram";
+import { TelegramClient, sessions, Api} from "telegram";
 const StringSession = sessions.StringSession;
 const dynamoDb = new AWS.DynamoDB.DocumentClient();
 import fs from "fs";
-import { Api } from "telegram";
 import { CustomFile } from 'telegram/client/uploads.js';
 import sharp from 'sharp';
 import fetch from 'node-fetch';
@@ -58,24 +57,31 @@ export const handler = async (event) => {
               continue;
             }
 
+            // Get date now in beijing time in M/dd format
+            const date = new Date();
+            const utcDate = new Date(date.toUTCString());
+            utcDate.setHours(utcDate.getHours() + 8);
+            const beijingDate = new Date(utcDate);
+            const beijingDateStr = `${beijingDate.getMonth() + 1}/${beijingDate.getDate()}`;
+
             // Process score change, send message when score change
             if(!match.status.finished && (((dbResult.Item?.home_score || 0) != match.home.score) || ((dbResult.Item?.away_score || 0) != match.away.score))){
               console.log("Team score has changed. Processing...");
               await updateMatchStatus(match.id, currentStatus, match.home.score, match.away.score, sentCount + 1);
-              await sendMessage(match.id, match.status.liveTime.long, leagueId, match.home, match.away, recipients, sentCount);
+              await sendMessage(match.id, match.status.liveTime.long, leagueId, match.home, match.away, recipients, sentCount, beijingDateStr);
             }
 
             // Process Half time
             if (currentStatus === 'STARTED' && match.statusId === 10 && match.status.liveTime.short === 'HT') {
               console.log("Match is half time. Processing...");
               await updateMatchStatus(match.id, 'HALF_TIME', match.home.score, match.away.score, sentCount + 1);
-              await sendMessage(match.id, '45:00', leagueId, match.home, match.away, recipients, sentCount);
+              await sendMessage(match.id, '45:00', leagueId, match.home, match.away, recipients, sentCount, beijingDateStr);
             }
 
             if (currentStatus !== 'PROCESSED' && !!match.status.finished) {
               console.log("Match has finished. Processing...");
               await updateMatchStatus(match.id, 'PROCESSED', match.home.score, match.away.score, sentCount + 1);
-              await sendMessage(match.id, match.status.halfs.firstExtraHalfStarted ? '120:00' : '90:00', leagueId, match.home, match.away, recipients, sentCount);
+              await sendMessage(match.id, match.status.halfs.firstExtraHalfStarted ? '120:00' : '90:00', leagueId, match.home, match.away, recipients, sentCount, beijingDateStr);
             }
           }
           resolve(); // Resolve the promise after the timeout
@@ -162,7 +168,7 @@ const updateMatchStatus = async (id, status, homeScore, awayScore, sentCount) =>
     await dynamoDb.update(updateParams).promise();
 }
 
-const sendMessage = async (matchId, matchTime, leagueId, homeTeam, awayTeam, recipients, sentCount) => {
+const sendMessage = async (matchId, matchTime, leagueId, homeTeam, awayTeam, recipients, sentCount, matchDate) => {
   const apiId = parseInt(process.env.API_ID, 10);
   const apiHash = process.env.API_HASH;
   const stringSession = new StringSession(process.env.STRING_SESSION);
@@ -175,7 +181,6 @@ const sendMessage = async (matchId, matchTime, leagueId, homeTeam, awayTeam, rec
     }
     homeTeam.logo = await retrieveTeamLogo(homeTeam.id);
     awayTeam.logo = await retrieveTeamLogo(awayTeam.id);
-
     for (const recipient of recipients) {
       // TODO fix hard code league name
       let leagueName = ' ' // Empty string will have erroe so use space
@@ -184,7 +189,7 @@ const sendMessage = async (matchId, matchTime, leagueId, homeTeam, awayTeam, rec
       } else if (leagueId === 44) {
         leagueName = recipient.language === 'english' ? 'COPA' : '美洲杯';
       }
-      await generateResultImage('./assets/score-background.jpeg', isTest ? './output.jpg' : '/tmp/output.jpg', leagueName, homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, matchTime, homeTeam.logo, awayTeam.logo, recipient.language);
+      await generateResultImage('./assets/score-background.jpeg', isTest ? './output.jpg' : '/tmp/output.jpg', homeTeam.name, awayTeam.name, homeTeam.score, awayTeam.score, matchTime, homeTeam.logo, awayTeam.logo, recipient.language, matchDate);
 
       if (sentCount < 10) { // Prevent spam
         const result = await client.invoke(
@@ -221,7 +226,6 @@ const getTeamLogo = async (teamId) => {
 async function generateResultImage(
   backgroundImagePath,
   outputImagePath,
-  leagueName,
   homeTeamName,
   awayTeamName,
   homeScore,
@@ -229,58 +233,49 @@ async function generateResultImage(
   fullTime,
   homeLogoUrl,
   awayLogoUrl,
-  language
+  language,
+  date
 ) {
   try {
     // Resize and overlay country flag image
     const homeLogoBuffer = await fetch(homeLogoUrl)
       .then(res => res.buffer())
-      .then(buffer => sharp(buffer).resize({ width: 300 }).toBuffer());
+      .then(buffer => sharp(buffer).resize({ width: 400 }).toBuffer());
     const awayLogoBuffer = await fetch(awayLogoUrl)
       .then(res => res.buffer())
-      .then(buffer => sharp(buffer).resize({ width: 300 }).toBuffer());
+      .then(buffer => sharp(buffer).resize({ width: 400 }).toBuffer());
 
 
-    const textFontPath = './fonts/font-text.ttf'
-    const numberFontPath = './fonts/DIGITALDREAMNARROW.ttf'
-    const leagueNameSvgBuffer = generatedTextBuffer(leagueName, 30, textFontPath, '#7AE04E');
-    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 35, textFontPath, 'white');
-    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 35, textFontPath, 'white');
-    const homeTextSvgBuffer = generatedTextBuffer(language === "english" ? "Home" : "主场", 30, textFontPath, '#7AE04E');
-    const awayTextSvgBuffer = generatedTextBuffer(language === "english" ? "Away" : "客场", 30, textFontPath, '#7AE04E');
-    const timeTextSvgBuffer = generatedTextBuffer(await translateText("Time", language), 30, textFontPath, '#7AE04E');
-    const homeScoreSvgBuffer = generatedTextBuffer(homeScore.toString().padStart(2, '0'), 150, numberFontPath, 'white');
-    const awayScoreSvgBuffer = generatedTextBuffer(awayScore.toString().padStart(2, '0'), 150, numberFontPath, 'white');
-    const fullTimeSvgBuffer = generatedTextBuffer(fullTime, 50, numberFontPath, fullTime === '90:00' || fullTime === '120:00' ? '#C62825' : '#7AE04E');
+    const textFontPath = './fonts/NotoSansSC-ExtraBold.ttf'
+    const numberFontPath = './fonts/NotoSansSC-ExtraBold.ttf'
+    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 60, textFontPath, 'white');
+    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 60, textFontPath, 'white');
+    const homeScoreSvgBuffer = generatedTextBuffer(homeScore.toString().padStart(1, '0'), 300, numberFontPath, 'white');
+    const awayScoreSvgBuffer = generatedTextBuffer(awayScore.toString().padStart(1, '0'), 300, numberFontPath, 'white');
+    const fullTimeSvgBuffer = generatedTextBuffer(fullTime, 70, numberFontPath, fullTime === '90:00' || fullTime === '120:00' ? '#C62825' : '#7AE04E');
+    const dateSvgBuffer = generatedTextBuffer(date, 50, numberFontPath, 'white');
 
     const backgroundMetadata = await sharp(backgroundImagePath, { limitInputPixels: false }).metadata();
-    const leagueNameMetadata = await sharp(leagueNameSvgBuffer).metadata();
     const homeTeamMetadata = await sharp(homeTeamSvgBuffer).metadata();
     const awayTeamMetadata = await sharp(awayTeamSvgBuffer).metadata();
-    const homeTextMetadata = await sharp(homeTextSvgBuffer).metadata();
-    const awayTextMetadata = await sharp(awayTextSvgBuffer).metadata();
-    const leagueNameLeft = parseInt((backgroundMetadata.width - leagueNameMetadata.width) / 2) - 20;
-    const homeTeamLeft = parseInt((backgroundMetadata.width - homeTeamMetadata.width) / 2) - 235;
-    const awayTeamLeft = parseInt((backgroundMetadata.width - awayTeamMetadata.width) / 2) + 200;
-    const homeTextLeft = parseInt((backgroundMetadata.width - homeTextMetadata.width) / 2) - 235;
-    const awayTextLeft = parseInt((backgroundMetadata.width - awayTextMetadata.width) / 2) + 198;
+    const homeTeamLeft = parseInt((backgroundMetadata.width - homeTeamMetadata.width) / 2) - 320;
+    const awayTeamLeft = parseInt((backgroundMetadata.width - awayTeamMetadata.width) / 2) + 300;
 
     const fullTimeMetadata = await sharp(fullTimeSvgBuffer).metadata();
-    const fullTimeLeft = parseInt((backgroundMetadata.width - fullTimeMetadata.width) / 2) - 19;
+    const dateMetaData = await sharp(dateSvgBuffer).metadata();
+    const fullTimeLeft = parseInt((backgroundMetadata.width - fullTimeMetadata.width) / 2) - 0;
+    const dateLeft = parseInt((backgroundMetadata.width - dateMetaData.width) / 2) - 5;
 
     await sharp(backgroundImagePath)
       .composite([
-        { input: homeLogoBuffer, top: 240, left: 50 },
-        { input: awayLogoBuffer, top: 240, left: 1210 },
-        { input: leagueNameSvgBuffer, top: 70, left: leagueNameLeft },
-        { input: homeTeamSvgBuffer, top: 110, left: homeTeamLeft },
-        { input: awayTeamSvgBuffer, top: 110, left: awayTeamLeft },
-        { input: homeTextSvgBuffer, top: 493, left: homeTextLeft },
-        { input: awayTextSvgBuffer, top: 493, left: awayTextLeft },
-        { input: timeTextSvgBuffer, top: 430, left: language === 'english' ? 745 : 750 },
-        { input: homeScoreSvgBuffer, top: 250, left: 480 },
-        { input: awayScoreSvgBuffer, top: 250, left: 902 },
-        { input: fullTimeSvgBuffer, top: 491, left: fullTimeLeft },
+        { input: homeLogoBuffer, top: 400, left: 150 },
+        { input: awayLogoBuffer, top: 400, left: 1750 },
+        { input: homeTeamSvgBuffer, top: 300, left: homeTeamLeft },
+        { input: awayTeamSvgBuffer, top: 300, left: awayTeamLeft },
+        { input: homeScoreSvgBuffer, top: 366, left: 756 },
+        { input: awayScoreSvgBuffer, top: 366, left: 1369 },
+        { input: fullTimeSvgBuffer, top: 835, left: fullTimeLeft },
+        { input: dateSvgBuffer, top: 300, left: dateLeft },
       ])
       .toFile(outputImagePath);
 
