@@ -240,16 +240,16 @@ async function generateResultImage(
     // Resize and overlay country flag image
     const homeLogoBuffer = await fetch(homeLogoUrl)
       .then(res => res.buffer())
-      .then(buffer => sharp(buffer).resize({ width: 300 }).toBuffer());
+      .then(buffer => sharp(buffer).resize({ width: 400 }).toBuffer());
     const awayLogoBuffer = await fetch(awayLogoUrl)
       .then(res => res.buffer())
-      .then(buffer => sharp(buffer).resize({ width: 300 }).toBuffer());
+      .then(buffer => sharp(buffer).resize({ width: 400 }).toBuffer());
 
 
     const textFontPath = './fonts/NotoSansSC-ExtraBold.ttf'
     const numberFontPath = './fonts/NotoSansSC-ExtraBold.ttf'
-    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 70, textFontPath, 'white');
-    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 70, textFontPath, 'white');
+    const homeTeamSvgBuffer = generatedTextBuffer(await translateText(homeTeamName, language), 60, textFontPath, 'white');
+    const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 60, textFontPath, 'white');
     const homeScoreSvgBuffer = generatedTextBuffer(homeScore.toString().padStart(1, '0'), 300, numberFontPath, 'white');
     const awayScoreSvgBuffer = generatedTextBuffer(awayScore.toString().padStart(1, '0'), 300, numberFontPath, 'white');
     const fullTimeSvgBuffer = generatedTextBuffer(fullTime, 70, numberFontPath, fullTime === '90:00' || fullTime === '120:00' ? '#C62825' : '#7AE04E');
@@ -270,8 +270,8 @@ async function generateResultImage(
       .composite([
         { input: homeLogoBuffer, top: 400, left: 150 },
         { input: awayLogoBuffer, top: 400, left: 1750 },
-        { input: homeTeamSvgBuffer, top: 280, left: homeTeamLeft },
-        { input: awayTeamSvgBuffer, top: 280, left: awayTeamLeft },
+        { input: homeTeamSvgBuffer, top: 300, left: homeTeamLeft },
+        { input: awayTeamSvgBuffer, top: 300, left: awayTeamLeft },
         { input: homeScoreSvgBuffer, top: 366, left: 756 },
         { input: awayScoreSvgBuffer, top: 366, left: 1369 },
         { input: fullTimeSvgBuffer, top: 835, left: fullTimeLeft },
