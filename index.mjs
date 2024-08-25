@@ -21,8 +21,13 @@ export const handler = async (event) => {
   isTest = event.isTest || false;
   skipRandomCheck = event.skipRandomCheck || false;
 
-
-  const matches = await fotmob.getMatchesByDate(matchDate || nowStr());
+  const now = new Date();
+  now.setUTCHours(now.getUTCHours() + 2);
+  const utcStr = now.getUTCFullYear().toString() +
+  String(now.getUTCMonth() + 1).padStart(2, '0') + // Months are zero-based
+  String(now.getUTCDate()).padStart(2, '0'); // Use getUTCDate() instead of getDay()
+  
+  const matches = await fotmob.getMatchesByDate(matchDate || utcStr);
   const mappedMatches = mapMatches(matches, leagueId);
 
   try {
@@ -75,13 +80,13 @@ export const handler = async (event) => {
             if (currentStatus === 'STARTED' && match.statusId === 10 && match.status.liveTime.short === 'HT') {
               console.log("Match is half time. Processing...");
               await updateMatchStatus(match.id, 'HALF_TIME', match.home.score, match.away.score, sentCount + 1);
-              await sendMessage(match.id, '45:00', leagueId, match.home, match.away, recipients, sentCount, beijingDateStr);
+              await sendMessage(match.id, 'HT', leagueId, match.home, match.away, recipients, sentCount, beijingDateStr);
             }
 
             if (currentStatus !== 'PROCESSED' && !!match.status.finished) {
               console.log("Match has finished. Processing...");
               await updateMatchStatus(match.id, 'PROCESSED', match.home.score, match.away.score, sentCount + 1);
-              await sendMessage(match.id, match.status.halfs.firstExtraHalfStarted ? '120:00' : '90:00', leagueId, match.home, match.away, recipients, sentCount, beijingDateStr);
+              await sendMessage(match.id, 'FT', leagueId, match.home, match.away, recipients, sentCount, beijingDateStr);
             }
           }
           resolve(); // Resolve the promise after the timeout
@@ -252,7 +257,7 @@ async function generateResultImage(
     const awayTeamSvgBuffer = generatedTextBuffer(await translateText(awayTeamName, language), 60, textFontPath, 'white');
     const homeScoreSvgBuffer = generatedTextBuffer(homeScore.toString().padStart(1, '0'), 300, numberFontPath, 'white');
     const awayScoreSvgBuffer = generatedTextBuffer(awayScore.toString().padStart(1, '0'), 300, numberFontPath, 'white');
-    const fullTimeSvgBuffer = generatedTextBuffer(fullTime, 70, numberFontPath, fullTime === '90:00' || fullTime === '120:00' ? '#C62825' : '#7AE04E');
+    const fullTimeSvgBuffer = generatedTextBuffer(await translateText(fullTime, language), 70, numberFontPath, fullTime === 'FT' ? '#C62825' : '#7AE04E');
     const dateSvgBuffer = generatedTextBuffer(date, 50, numberFontPath, 'white');
 
     const backgroundMetadata = await sharp(backgroundImagePath, { limitInputPixels: false }).metadata();
@@ -292,8 +297,22 @@ const retrieveTeamLogo = async (teamId) => {
 
 const translateText = async (text, language) => {
   if (language === "english") {
+    if (text === 'FT') {
+      return 'FT';
+    }
+    if (text === 'HT') {
+      return 'HT';
+    }
     // capitalize first letter
     return text.charAt(0).toUpperCase() + text.slice(1);
+  }
+  if (language === "chinese") {
+    if (text === 'FT') {
+      return '全场';
+    }
+    if (text === 'HT') {
+      return '半场';
+    }
   }
   return await translate(text, language);
 }
