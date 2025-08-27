@@ -1,3 +1,9 @@
+# Sport Broadcaster #
+This is a tools to broadcast football match score to telegram channel whenever a team scored.
+It achieved by using AWS Lambda and AWS EventBridge.
+
+
+# Instruction #
 ## Remove Existing zip file ##
 `rm send-match-result.zip`
 
